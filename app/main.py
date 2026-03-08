@@ -1,5 +1,8 @@
+from unittest import loader
+
 from fastapi import FastAPI
 from app.config import settings
+from app.ingestion.pdf_loader import PDFLoader
 
 
 class Application:
@@ -25,6 +28,17 @@ class Application:
             return {
                 "openai_key_loaded": bool(settings.openai_api_key)
             }
+        
+        @self.app.get("/test-pdf-loader")
+        def test_pdf_loader():
+            loader = PDFLoader("data/pdfs")
+            docs = loader.extract_text()
+
+            return {
+                "number_of_documents": len(docs),
+                "documents": docs[:1]  # show first doc only
+            }
+    
 
 
 # Create application instance
