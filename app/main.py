@@ -22,21 +22,22 @@ class Application:
         self._register_routes()
 
     def _register_routes(self):
-        @self.app.get("/")
+
+        # ── Health ────────────────────────────────────────────────
+        @self.app.get("/", tags=["Health"])
         def health_check():
             return {
                 "status": "OK",
                 "message": "Fastest RAG Stack is running!",
             }
 
-        @self.app.get("/check-openai")
-        def check_openai_key():
-            return {
-                "openai_key_loaded": bool(settings.openai_api_key)
-            }
-        
-        @self.app.get("/test-pdf-loader")
-        async def test_pdf_loader(query: str):
+        # ── Ingestion ─────────────────────────────────────────────
+        @self.app.post("/ingest", tags=["Ingestion"])
+        async def ingest():
+            """
+            Load PDFs → chunk → embed → store in vector DB.
+            Call this once before querying.
+            """
             try:
                 loader = PDFLoader("data/pdfs")
                 docs = loader.extract_text()
@@ -45,41 +46,68 @@ class Application:
                 chunks = chunker.chunk_documents(docs)
 
                 embedder = EmbeddingGenerator()
-                embedded_chunks = embedder.generate_embeddings(chunks[:10])  # Only embed the first 10 chunks for testing
+                embedded_chunks = embedder.generate_embeddings(chunks)
 
                 vector_store = VectorStore()
                 vector_store.add_embeddings(embedded_chunks)
 
-                retriever = Retriever()
-
-                retrieved_chunks = retriever.retrieve(query=query, k=3)
-
-                generator = LLMGenerator()
-
-                answer = generator.generate_answer(
-                    query = query,
-                    retrieved_chunks = retrieved_chunks
-                )
+                return {
+                    "status": "Ingestion complete",
+                    "documents_loaded": len(docs),
+                    "chunks_created": len(chunks),
+                    "embeddings_stored": len(embedded_chunks),
+                    "sample_embedding_dimension": len(embedded_chunks[0]["embedding"]),
+                }
 
             except Exception as e:
                 traceback.print_exc()
-                return JSONResponse(
-                    status_code=500,
-                    content={"error": str(e)}
+                return JSONResponse(status_code=500, content={"error": str(e)})
+
+        # ── Retrieval ─────────────────────────────────────────────
+        @self.app.get("/retrieve", tags=["Retrieval"])
+        async def retrieve(query: str, k: int = 3):
+            """
+            Retrieve the top k relevant chunks for a query.
+            """
+            try:
+                retriever = Retriever()
+                retrieved_chunks = retriever.retrieve(query=query, k=k)
+
+                return {
+                    "query": query,
+                    "retrieved_chunks": retrieved_chunks,
+                }
+
+            except Exception as e:
+                traceback.print_exc()
+                return JSONResponse(status_code=500, content={"error": str(e)})
+
+        # ── Generation ────────────────────────────────────────────
+        @self.app.get("/ask", tags=["Generation"])
+        async def ask(query: str, k: int = 3):
+            """
+            Full RAG pipeline: retrieve relevant chunks + generate answer.
+            """
+            try:
+                retriever = Retriever()
+                retrieved_chunks = retriever.retrieve(query=query, k=k)
+
+                generator = LLMGenerator()
+                answer = generator.generate_answer(
+                    query=query,
+                    retrieved_chunks=retrieved_chunks
                 )
 
-            return {
-                "number_of_documents": len(docs),
-                "chunks_created": len(chunks),
-                "embeddings_generated": len(embedded_chunks),
-                "sample_embedding_dimension": len(embedded_chunks[0]["embedding"]),
-                "stored_in_vector_db": len(embedded_chunks),
-                "documents": docs[:2],
-                "chunks": chunks[:2],
-                "query": query,
-                "answer": answer
+                return {
+                    "query": query,
+                    "answer": answer,
+                    "retrieved_chunks": retrieved_chunks,
+                }
 
-            }
+            except Exception as e:
+                traceback.print_exc()
+                return JSONResponse(status_code=500, content={"error": str(e)})
+
 
 # Create application instance
 application = Application()
